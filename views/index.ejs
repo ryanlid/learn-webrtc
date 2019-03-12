@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>WebRTC</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+
+<body>
+  <video autoplay id="myVideo"></video>
+  <video autoplay id="theirVideoArea"></video>
+  <div>
+    <label>Your name</label>
+    <input type="text" id="myName">
+    <label>message</label>
+    <input type="text" id="myMessage">
+    <input type="submit" id="sendMessage">
+    <div id="chatArea">
+      Message Output:
+    </div>
+    <div id="signalingArea">
+      signalingArea:
+    </div>
+  </div>
+  <script>
+    // navigator.getUserMedia = navigator.getUserMedia || navigator.mozGetUserMedia || navigator.webkitGetUserMedia
+
+    var myVideoArea = document.querySelector('#myVideo');
+    var myName = document.querySelector('#myName')
+    var myMessage = document.querySelector('#myMessage')
+    var sendMessage = document.querySelector('#sendMessage')
+    var chat = document.querySelector('#chat')
+    var sendMessage = document.querySelector('#sendMessage')
+    var chatArea = document.querySelector('#chatArea')
+    var theirVideoArea = document.querySelector('#theirVideoArea')
+    var signalingArea = document.querySelector('#signalingArea')
+    var ROOM = 'chat'
+    var SIGINAL_ROOM = 'siginal_room'
+    // var configuration = {
+    //   'iceServers': [{
+    //     'urls': 'stun:stun.l.google.com:19302'
+    //     // 'urls':'stun:stun.nextcloud.com:443'
+    //   }]
+    // };
+    const configuration = {
+      'iceServers': [{
+        // 'urls': 'turn:numb.viagenie.ca',
+        // 'username': 'muazkh',
+        // 'credential': 'webrtc@live.com'
+        // },
+        // {
+        'urls': 'stun:stun.l.google.com:19302'
+        // },
+        // {
+        // 'urls': 'stun:stun.voxgratia.org'
+      }],
+      bundlePolicy: 'max-bundle',
+    };
+    var rtcPeerConn;
+
+    io = io.connect();
+    io.emit("ready", {
+      "chat_room": ROOM,
+      "signal_room": SIGINAL_ROOM
+    })
+    io.emit('signal', {
+      "type": "user_here",
+      "message": "Are you ready for a call?",
+      "room": SIGINAL_ROOM
+    })
+    io.on('signaling_message', function (data) {
+      // console.log('signaling_message', data)
+      displaySiginalMessage("Siginal received: " + data.type)
+      // Setup the RTC Peer connection object
+      if (!rtcPeerConn) {
+        startSignaling();
+      }
+      if (data.type != "user_here") {
+        // console.log('data type', data.type)
+        var message = JSON.parse(data.message);
+        if (message.sdp) {
+          console.log(2222222222)
+          rtcPeerConn.setRemoteDescription(new RTCSessionDescription(message.sdp))
+            .then(function () {
+              console.log(777777777)
+              if (rtcPeerConn.remoteDescription.type == "offer") {
+                rtcPeerConn.createAnswer(sendLocalDesc, logError);
+              } else {
+                return
+              };
+            }).catch(
+              logError
+            );
+        } else {
+          console.log(5555555555)
+          console.log(message)
+          rtcPeerConn.addIceCandidate(new RTCIceCandidate(data.candidate))
+        }
+      }
+    });
+
+    function startSignaling() {
+      displaySiginalMessage("starting signaling...")
+      console.log('starting signaling...111111')
+      rtcPeerConn = new RTCPeerConnection(configuration);
+      console.log(rtcPeerConn)
+      rtcPeerConn.onicecandidate = function (evt) {
+        // alert(1)
+        // console.log(evt)
+        if (evt.candidate) {
+          io.emit('signal', {
+            "type": "ice canidate",
+            "message": JSON.stringify({
+              'candidate': evt.candidate,
+              "room": SIGINAL_ROOM
+            })
+          })
+          displaySiginalMessage("completed that ice candidate")
+        }
+      }
+
+      rtcPeerConn.onnegotiationneeded = function () {
+        displaySiginalMessage('on negotiation called');
+        rtcPeerConn.createOffer()
+          .then(
+            sendLocalDesc
+          )
+          .catch(
+            logError
+          )
+      }
+
+      rtcPeerConn.onaddstream = function (evt) {
+        displaySiginalMessage('going to add their stream...')
+        theirVideoArea.srcObject = evt.stream
+      }
+      // rtcPeerConn.onaddStream = URL.createObjectURL(evt.stream)
+      rtcPeerConn.ontrack = (event) => {
+        console.log(4444444)
+      }
+      console.log(122)
+
+      navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true
+      }).then(function (stream) {
+        displaySiginalMessage('going to display my stream....')
+        myVideoArea.srcObject = stream;
+        myVideoArea.className = 'grayscale_filter';
+        myVideoArea.play();
+        rtcPeerConn.addStream(stream)
+      }).catch(
+        logError
+      )
+    }
+
+    function sendLocalDesc(desc) {
+      rtcPeerConn.setLocalDescription(desc)
+        .then(() => {
+          console.log(1111)
+          displaySiginalMessage("sending localdescription");
+          io.emit('signal', {
+            "type": "SDP",
+            "message": JSON.stringify({ "sdp": rtcPeerConn.localDescription }),
+            "room": SIGINAL_ROOM
+          });
+        }).catch(
+          logError
+        )
+    }
+
+    function logError(error) {
+      console.log(error.message)
+      displaySiginalMessage(error.name + ":" + error.message)
+    }
+    io.on('announce', (data) => {
+      console.log(data)
+      displayMessage(data.message)
+    });
+    io.on('message', (data) => {
+      console.log(data)
+      displayMessage(data.author + ":" + data.message)
+    })
+
+    sendMessage.addEventListener('click', function (ev) {
+      ev.preventDefault()
+      console.log(myName.value)
+      console.log(myMessage.value)
+      io.emit('send', {
+        "author": myName.value,
+        "message": myMessage.value,
+        "room": ROOM
+      })
+    })
+
+    function displayMessage(message) {
+      chatArea.innerHTML = chatArea.innerHTML + "<br/>" + message
+    }
+
+    function displaySiginalMessage(message) {
+      signalingArea.innerHTML = signalingArea.innerHTML + "<br/>" + message
+    }
+
+  </script>
+</body>
+
+</html>
